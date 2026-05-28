@@ -43,6 +43,7 @@ public class Sql {
 
     public long insert() {
         String query = sb.toString();
+        System.out.println(query);
 
         try (
                 PreparedStatement stmt = connection.prepareStatement(query, Statement.RETURN_GENERATED_KEYS)
@@ -196,11 +197,17 @@ public class Sql {
         // 배열 하나만 들어온 경우
         if (params.length == 1 && params[0] instanceof Object[] array) {
             for (Object value : array) {
+                if (value instanceof String s) {
+                    value = "'" + s + "'";
+                }
                 joiner.add(value.toString());
             }
         }
         else {
             for (Object value : params) {
+                if (value instanceof String s) {
+                    value = "'" + s + "'";
+                }
                 joiner.add(value.toString());
             }
         }

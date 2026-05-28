@@ -3,16 +3,24 @@ package com.back.simpleDb;
 import java.sql.*;
 
 public class SimpleDb {
-    private Connection connection;
+    private final SimpleDataSource dataSource;
+    private final ThreadLocal<Connection> threadLocalConnection = new ThreadLocal<>();
 
     SimpleDb(String host, String dbUser, String dbPassword, String dbName) {
-        try {
-            String url = "jdbc:mysql://" + host + ":3306/" + dbName + "?serverTimezone=Asia/Seoul" + "&characterEncoding=UTF-8";
-            Connection connection = DriverManager.getConnection(url, dbUser, dbPassword);
-            this.connection = connection;
-        } catch(SQLException e) {
-            e.printStackTrace();
+        String url = "jdbc:mysql://" + host + ":3306/" + dbName + "?serverTimezone=Asia/Seoul" + "&characterEncoding=UTF-8";
+        this.dataSource = new SimpleDataSource(url, dbUser, dbPassword);
+    }
+
+    public Connection getConnection() throws SQLException {
+        Connection connection = threadLocalConnection.get();
+
+        // transaction 중이면 기존 connection 재사용
+        if (connection != null && !connection.isClosed()) {
+            return connection;
         }
+
+        // transaction 아니면 새 connection 반환
+        return dataSource.getConnection();
     }
 
     public void setDevMode(boolean devMode) {
@@ -23,7 +31,7 @@ public class SimpleDb {
 
     public void run(String sql)  {
         try {
-            Statement statement = connection.createStatement();
+            Statement statement = getConnection().createStatement();
             statement.executeUpdate(sql);
         } catch (SQLException e) {
             throw new RuntimeException(e);
@@ -48,19 +56,80 @@ public class SimpleDb {
     }
 
     public Sql genSql() {
-        return new Sql(connection);
+        try {
+            return new Sql(getConnection());
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     public void close() {
         try {
-            connection.close();
+            getConnection().close();
         } catch(SQLException e) {
             e.printStackTrace();
         }
     }
 
-    public void startTransaction() {}
-    public void commit() {}
-    public void rollback() {}
+    public void startTransaction() {
+        try {
+            Connection connection = dataSource.getConnection();
+            connection.setAutoCommit(false);
+            threadLocalConnection.set(connection);
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
+    }
 
+    public void commit() {
+        Connection connection = threadLocalConnection.get();
+        if (connection == null) {
+            return;
+        }
+
+        try {
+            connection.commit();
+            connection.setAutoCommit(true);
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        } finally {
+            closeTransactionConnection();
+        }
+    }
+
+    public void rollback() {
+        Connection connection = threadLocalConnection.get();
+        if (connection == null) {
+            return;
+        }
+
+        try {
+            connection.rollback();
+            connection.setAutoCommit(true);
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        } finally {
+            closeTransactionConnection();
+        }
+    }
+
+    public boolean isTransactionActive() {
+        Connection connection = threadLocalConnection.get();
+        return connection != null;
+    }
+
+    private void closeTransactionConnection() {
+        Connection connection = threadLocalConnection.get();
+        if (connection == null) {
+            return;
+        }
+
+        try {
+            connection.close();
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        } finally {
+            threadLocalConnection.remove();
+        }
+    }
 }
